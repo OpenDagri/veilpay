@@ -66,3 +66,7 @@ A1priv/
 
 # Claude Code scratch
 .claude/
+
+# Internal agent spec — kept out of the public repo
+/CLAUDE.md
+
