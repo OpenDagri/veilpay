@@ -17,8 +17,8 @@ const spaceMono = Space_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Shielded STRK · WalletAccountV6',
-  description: 'Shield, unshield and privately move STRK on Starknet with WalletAccountV6',
+  title: 'VeilPay — Private Payroll on Starknet',
+  description: 'Pay a payroll privately on Starknet using STRK20. Built by OpenDagri.',
 }
 
 export default function RootLayout({

@@ -57,13 +57,13 @@ export default function Page() {
 
       <header className={styles.hero}>
         <h1 className={styles.heroTitle}>
-          Just Encrypt
+          VeilPay
           <br />
-          <span className={styles.heroAccent}>Everything</span>
+          <span className={styles.heroAccent}>Private Payroll on Starknet</span>
         </h1>
         <p className={styles.heroSub}>
-          Shield, unshield, privately transfer and build your own private apps
-          on Starknet.
+          Pay a payroll privately. Recipient names and amounts stay off the
+          public chain — only the pool activity is visible.
         </p>
       </header>
 
@@ -72,11 +72,11 @@ export default function Page() {
       </main>
 
       <footer className={styles.footer}>
-        <a href="https://github.com/PhilippeR26/Starknet-WalletAccount" target="_blank" rel="noreferrer">
+        <a href="https://github.com/OpenDagri/veilpay" target="_blank" rel="noreferrer">
           Repo
         </a>
         <span className={styles.footerDot}>·</span>
-        <span>Powered by Starknet.js v10.4.0</span>
+        <span>STRK20 via starknet.js 10.4.0 · Built by OpenDagri</span>
       </footer>
     </div>
   );

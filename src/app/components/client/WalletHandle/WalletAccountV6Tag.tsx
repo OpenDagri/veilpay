@@ -9,6 +9,7 @@ import { useStoreWallet } from "../../Wallet/walletContext";
 import { useFrontendProvider } from "../provider/providerContext";
 import { StrkCoin } from "../../TokenIcons";
 import SelectWallet from "./SelectWallet";
+import PayrollTab from "../Payroll/PayrollTab";
 
 // DEMO: all actions use one token (STRK). Swap constants.addrSTRK for your token,
 // or make the token a user selection.
@@ -132,8 +133,12 @@ function errorResult(msg: string): ActionResult {
 }
 
 // Tabs - one STRK20 action each (Umbra-style single-action interface).
-type TabKey = "shield" | "send" | "unshield" | "echo" | "balances";
+// "payroll" is VeilPay's headline flow; the rest of the tabs are kept as
+// primitive-level building blocks for judges who want to see them work.
+type TabKey = "payroll" | "shield" | "send" | "unshield" | "echo" | "balances";
+type ActionTabKey = Exclude<TabKey, "payroll">;
 const TABS: { key: TabKey; label: string }[] = [
+  { key: "payroll", label: "Payroll" },
   { key: "shield", label: "Shield" },
   { key: "send", label: "Send" },
   { key: "unshield", label: "Unshield" },
@@ -175,8 +180,8 @@ export default function WalletAccountV6Tag() {
   // Echo-helper deploy (shown only on a supported network with no helper yet).
   const [resultDeploy, setResultDeploy] = useState<ActionResult | null>(null);
   const [deploying, setDeploying] = useState<boolean>(false);
-  // Active action tab (Umbra-style single-action interface).
-  const [tab, setTab] = useState<TabKey>("shield");
+  // Active action tab. Default to the Payroll flow — VeilPay's headline.
+  const [tab, setTab] = useState<TabKey>("payroll");
 
   const getWAchainId = () => {
     myWalletAccount?.provider
@@ -485,7 +490,7 @@ export default function WalletAccountV6Tag() {
   // Per-tab content: label, the fixed amount + token, a one-line hint, the CTA
   // label, its handler, and the structured result.
   const CONFIG: Record<
-    TabKey,
+    ActionTabKey,
     { label: string; value: string; token: string; hint: string; cta: string; onRun: () => void; result: ActionResult | null; disabled: boolean }
   > = {
     shield: { label: "You're shielding", value: "10", token: "STRK", hint: "Deposit into the privacy pool", cta: "Shield", onRun: handleShield, result: resultShield, disabled: !isStrk20Network },
@@ -494,7 +499,7 @@ export default function WalletAccountV6Tag() {
     echo: { label: "Echo invoke round-trip", value: "5", token: "STRK", hint: "Withdraw → helper → refill open note", cta: "Run echo", onRun: handleComplex, result: resultComplex, disabled: !isStrk20Network || !hasEchoHelper },
     balances: { label: "Shielded balances", value: "All", token: "tokens", hint: "Read your private pool balances", cta: "Query balances", onRun: handleBalances, result: resultBalances, disabled: !isStrk20Network },
   };
-  const active = CONFIG[tab];
+  const active = tab !== "payroll" ? CONFIG[tab] : null;
 
   return (
     <div className={styles.panel}>
@@ -511,89 +516,95 @@ export default function WalletAccountV6Tag() {
         ))}
       </div>
 
-      {/* Active-action input block */}
-      <div className={styles.inputBlock}>
-        <div className={styles.inputLabel}>{active.label}</div>
-        <div className={styles.inputMain}>
-          <div className={styles.bigValue}>{active.value}</div>
-          <span className={styles.tokenPill}>
-            <span className={styles.tokenDot}>
-              <StrkCoin size={22} />
-            </span>
-            {active.token}
-          </span>
-        </div>
-        <div className={styles.subLine}>
-          <span>{active.hint}</span>
-          <span className={styles.subMono}>{shortWallet}</span>
-        </div>
-      </div>
-
-      {/* Info / network row */}
-      <div className={styles.feeRow}>
-        <span>Network</span>
-        <span className={`${styles.feeVal} ${isStrk20Network ? styles.netOk : styles.netBad}`}>
-          <span className={`${styles.netDot} ${isStrk20Network ? styles.netOkDot : styles.netBadDot}`} />
-          {networkName ?? "Unsupported"}
-        </span>
-      </div>
-
-      {!isStrk20Network && (
-        <div className={styles.warn}>
-          STRK20 actions require Mainnet or Sepolia - switch your wallet network.
-        </div>
-      )}
-
-      {/* Echo-helper deploy (echo tab, supported network, no helper yet) */}
-      {tab === "echo" && isStrk20Network && !hasEchoHelper && (
+      {tab === "payroll" ? (
+        <PayrollTab />
+      ) : active ? (
         <>
-          <div className={styles.warn}>
-            Echo helper not deployed on {networkName}. Deploy one, then set
-            NEXT_PUBLIC_STRK20_ECHO_HELPER_SEPOLIA.
-          </div>
-          <button
-            className={`${styles.btn} ${styles.btnGreen} ${styles.btnBlock}`}
-            disabled={deploying}
-            onClick={handleDeployHelper}
-          >
-            {deploying ? "Deploying…" : `Deploy echo helper (${networkName})`}
-          </button>
-          {resultDeploy ? <ResultCard r={resultDeploy} /> : null}
-        </>
-      )}
-
-      {/* Primary CTA - connect prompt until a wallet is connected. */}
-      {isConnected ? (
-        <button className={styles.btnCta} disabled={active.disabled} onClick={active.onRun}>
-          {active.cta}
-        </button>
-      ) : (
-        <SelectWallet variant="ctaBig" />
-      )}
-
-      {/* Echo verdict */}
-      {tab === "echo" && verdictComplex && (
-        <div
-          className={`${styles.verdict} ${
-            verdictComplex.pending ? "" : verdictComplex.ok ? styles.verdictPass : styles.verdictFail
-          }`}
-        >
-          <div className={styles.verdictHead}>
-            <span>{verdictComplex.pending ? "⏳" : verdictComplex.ok ? "✅" : "❌"}</span>
-            {verdictComplex.title}
-          </div>
-          {verdictComplex.rows.map((row) => (
-            <div key={row.label} className={styles.verdictRow}>
-              {row.ok !== undefined && <span>{row.ok ? "✅" : "❌"}</span>}
-              <b>{row.label}:</b>
-              <span>{row.value}</span>
+          {/* Active-action input block */}
+          <div className={styles.inputBlock}>
+            <div className={styles.inputLabel}>{active.label}</div>
+            <div className={styles.inputMain}>
+              <div className={styles.bigValue}>{active.value}</div>
+              <span className={styles.tokenPill}>
+                <span className={styles.tokenDot}>
+                  <StrkCoin size={22} />
+                </span>
+                {active.token}
+              </span>
             </div>
-          ))}
-        </div>
-      )}
+            <div className={styles.subLine}>
+              <span>{active.hint}</span>
+              <span className={styles.subMono}>{shortWallet}</span>
+            </div>
+          </div>
 
-      {/* Inline result */}
-      {active.result ? <ResultCard r={active.result} /> : null}
+          {/* Info / network row */}
+          <div className={styles.feeRow}>
+            <span>Network</span>
+            <span className={`${styles.feeVal} ${isStrk20Network ? styles.netOk : styles.netBad}`}>
+              <span className={`${styles.netDot} ${isStrk20Network ? styles.netOkDot : styles.netBadDot}`} />
+              {networkName ?? "Unsupported"}
+            </span>
+          </div>
+
+          {!isStrk20Network && (
+            <div className={styles.warn}>
+              STRK20 actions require Mainnet or Sepolia - switch your wallet network.
+            </div>
+          )}
+
+          {/* Echo-helper deploy (echo tab, supported network, no helper yet) */}
+          {tab === "echo" && isStrk20Network && !hasEchoHelper && (
+            <>
+              <div className={styles.warn}>
+                Echo helper not deployed on {networkName}. Deploy one, then set
+                NEXT_PUBLIC_STRK20_ECHO_HELPER_SEPOLIA.
+              </div>
+              <button
+                className={`${styles.btn} ${styles.btnGreen} ${styles.btnBlock}`}
+                disabled={deploying}
+                onClick={handleDeployHelper}
+              >
+                {deploying ? "Deploying…" : `Deploy echo helper (${networkName})`}
+              </button>
+              {resultDeploy ? <ResultCard r={resultDeploy} /> : null}
+            </>
+          )}
+
+          {/* Primary CTA - connect prompt until a wallet is connected. */}
+          {isConnected ? (
+            <button className={styles.btnCta} disabled={active.disabled} onClick={active.onRun}>
+              {active.cta}
+            </button>
+          ) : (
+            <SelectWallet variant="ctaBig" />
+          )}
+
+          {/* Echo verdict */}
+          {tab === "echo" && verdictComplex && (
+            <div
+              className={`${styles.verdict} ${
+                verdictComplex.pending ? "" : verdictComplex.ok ? styles.verdictPass : styles.verdictFail
+              }`}
+            >
+              <div className={styles.verdictHead}>
+                <span>{verdictComplex.pending ? "⏳" : verdictComplex.ok ? "✅" : "❌"}</span>
+                {verdictComplex.title}
+              </div>
+              {verdictComplex.rows.map((row) => (
+                <div key={row.label} className={styles.verdictRow}>
+                  {row.ok !== undefined && <span>{row.ok ? "✅" : "❌"}</span>}
+                  <b>{row.label}:</b>
+                  <span>{row.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Inline result */}
+          {active.result ? <ResultCard r={active.result} /> : null}
+        </>
+      ) : null}
     </div>
   );
 }
