@@ -12,8 +12,14 @@ import { DEMO_RECIPIENTS } from "@/lib/demo/recipients";
 import { executePayroll } from "@/lib/payroll/executor";
 import { sumExecutionAmount } from "@/lib/payroll/types";
 import type { Payroll } from "@/lib/payroll/types";
+import {
+  STRK_MAINNET_TOKEN,
+  isMainnetChainId,
+  sameAddress,
+} from "@/lib/starknet/networks";
 
 const TOKEN = constants.addrSTRK;
+const TOKEN_VERIFIED_MAINNET = sameAddress(TOKEN, STRK_MAINNET_TOKEN);
 
 function fmtStrkBaseUnits(amount: bigint): string {
   const whole = amount / 10n ** 18n;
@@ -40,16 +46,19 @@ export default function PayrollTab() {
   const myWalletAccount = useStoreWallet((s) => s.myWalletAccount);
   const connectedAddress = useStoreWallet((s) => s.address);
   const isConnected = useStoreWallet((s) => s.isConnected);
+  const chainId = useStoreWallet((s) => s.chain);
   const myFrontendProviderIndex = useFrontendProvider(
     (s) => s.currentFrontendProviderIndex
   );
   const networkName = constants.Strk20Networks[myFrontendProviderIndex];
   const isStrk20Network = networkName !== undefined;
+  const chainVerifiedMainnet = isMainnetChainId(chainId);
 
   const [seed, setSeed] = useState<string>(DEFAULT_DEMO_SEED);
   const [count, setCount] = useState<number>(3);
   const [payroll, setPayroll] = useState<Payroll | null>(null);
   const [preflight, setPreflight] = useState<PreflightState>({ kind: "idle" });
+  const [confirming, setConfirming] = useState<boolean>(false);
   const [busy, setBusy] = useState<boolean>(false);
 
   const totalExecution = useMemo(
@@ -59,17 +68,21 @@ export default function PayrollTab() {
 
   const missingAddresses =
     payroll?.recipients.filter((r) => !r.address).length ?? 0;
-  const canExecute =
+  const canRequestExecute =
     isConnected &&
     isStrk20Network &&
+    chainVerifiedMainnet &&
+    TOKEN_VERIFIED_MAINNET &&
     payroll !== null &&
     payroll.status === "ready" &&
     missingAddresses === 0 &&
-    preflight.kind !== "insufficient" &&
-    !busy;
+    preflight.kind === "ok" &&
+    !busy &&
+    !confirming;
 
   const handleGenerate = () => {
     setPreflight({ kind: "idle" });
+    setConfirming(false);
     setPayroll(generatePayroll({ seed, recipientCount: count }));
   };
 
@@ -77,6 +90,7 @@ export default function PayrollTab() {
     const newSeed = `${seed}-${Math.random().toString(36).slice(2, 8)}`;
     setSeed(newSeed);
     setPreflight({ kind: "idle" });
+    setConfirming(false);
     setPayroll(generatePayroll({ seed: newSeed, recipientCount: count }));
   };
 
@@ -109,8 +123,23 @@ export default function PayrollTab() {
     }
   };
 
-  const handleExecute = async () => {
+  // Two-step execute: first click opens the confirmation card; only the
+  // second click ("Sign & submit") sends the transaction to the wallet.
+  const handleRequestExecute = () => {
+    if (!canRequestExecute) return;
+    setConfirming(true);
+  };
+
+  const handleCancelConfirm = () => setConfirming(false);
+
+  const handleSignAndSubmit = async () => {
     if (!myWalletAccount || !payroll) return;
+    // Belt + braces: re-check chain right before the wallet call. The store
+    // value may have gone stale since preflight; if the wallet is not on
+    // mainnet at THIS moment, refuse.
+    if (!chainVerifiedMainnet) return;
+    if (!TOKEN_VERIFIED_MAINNET) return;
+    setConfirming(false);
     setBusy(true);
     const provider = constants.myFrontendProviders[myFrontendProviderIndex];
     try {
@@ -118,6 +147,7 @@ export default function PayrollTab() {
         wallet: myWalletAccount,
         provider,
         tokenAddress: TOKEN,
+        currentChainId: chainId,
         onUpdate: (p) => setPayroll(p),
       });
     } catch {
@@ -256,10 +286,38 @@ export default function PayrollTab() {
         </div>
       )}
 
+      {/* Chain + token verification badges (mainnet-only demo) */}
+      <div
+        style={{
+          marginTop: 12,
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <VerifyBadge
+          ok={chainVerifiedMainnet}
+          label={
+            chainVerifiedMainnet
+              ? "Chain verified: Starknet Mainnet"
+              : `Wrong chain: ${chainId || "not connected"} — must be Starknet Mainnet`
+          }
+        />
+        <VerifyBadge
+          ok={TOKEN_VERIFIED_MAINNET}
+          label={
+            TOKEN_VERIFIED_MAINNET
+              ? `Token verified: STRK — ${shortHex(TOKEN)}`
+              : `UNVERIFIED token: ${shortHex(TOKEN)}`
+          }
+        />
+      </div>
+
       {/* Network gate */}
       {!isStrk20Network && (
         <div className={styles.warn} style={{ marginTop: 12 }}>
-          STRK20 actions require Mainnet or Sepolia — switch your wallet network.
+          STRK20 actions require Mainnet — switch your wallet network to
+          Starknet Mainnet.
         </div>
       )}
 
@@ -315,22 +373,119 @@ export default function PayrollTab() {
         </div>
       )}
 
-      {/* Execute */}
-      <div style={{ marginTop: 16 }}>
-        <button
-          className={styles.btnCta}
-          disabled={!canExecute}
-          onClick={handleExecute}
+      {/* Confirmation card (shown between Execute click and wallet call) */}
+      {confirming && payroll && (
+        <div
+          className={styles.receipt}
+          style={{ marginTop: 16, borderColor: "var(--pink)" }}
         >
-          {busy
-            ? "Executing…"
-            : payroll?.status === "completed"
-            ? "Payroll complete"
-            : payroll?.status === "failed"
-            ? "Retry payroll"
-            : "Execute privately"}
-        </button>
-      </div>
+          <div className={styles.receiptHead}>
+            <span>Confirm private payroll</span>
+          </div>
+          <div className={styles.receiptRows}>
+            <div className={styles.receiptRow}>
+              <span className={styles.receiptLabel}>Chain</span>
+              <span className={styles.receiptValue}>
+                Starknet Mainnet <span style={{ color: "var(--green)" }}>✓</span>
+              </span>
+            </div>
+            <div className={styles.receiptRow}>
+              <span className={styles.receiptLabel}>Token</span>
+              <span className={styles.receiptValue}>
+                STRK · <span style={{ fontFamily: "var(--font-mono-ui)" }}>{TOKEN}</span>{" "}
+                <span style={{ color: "var(--green)" }}>✓</span>
+              </span>
+            </div>
+            <div className={styles.receiptRow}>
+              <span className={styles.receiptLabel}>Employer</span>
+              <span className={styles.receiptValue}>
+                <span style={{ fontFamily: "var(--font-mono-ui)" }}>
+                  {connectedAddress ?? "—"}
+                </span>
+              </span>
+            </div>
+            <div className={styles.receiptRow}>
+              <span className={styles.receiptLabel}>Total execution</span>
+              <span className={styles.receiptValue}>
+                <b>{fmtStrkBaseUnits(totalExecution)} STRK</b>
+              </span>
+            </div>
+          </div>
+          <div style={{ padding: "8px 12px 0" }}>
+            <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>
+              {payroll.recipients.length} private transfer{payroll.recipients.length === 1 ? "" : "s"}, one batched transaction:
+            </div>
+            {payroll.recipients.map((r) => (
+              <div
+                key={r.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  fontSize: 12,
+                  padding: "3px 0",
+                }}
+              >
+                <span style={{ opacity: 0.6 }}>{r.displayName}</span>
+                <span
+                  style={{
+                    fontFamily: "var(--font-mono-ui)",
+                    opacity: 0.85,
+                    flex: 1,
+                    textAlign: "center",
+                  }}
+                >
+                  → {r.address}
+                </span>
+                <span>{fmtStrkBaseUnits(r.executionAmount)} STRK</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, padding: 12 }}>
+            <button
+              className={styles.btn}
+              onClick={handleCancelConfirm}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button
+              className={styles.btnCta}
+              style={{ flex: 1 }}
+              onClick={handleSignAndSubmit}
+              disabled={busy || !chainVerifiedMainnet || !TOKEN_VERIFIED_MAINNET}
+            >
+              {busy ? "Signing…" : "Sign & submit"}
+            </button>
+          </div>
+          <div
+            className={styles.warn}
+            style={{ margin: "0 12px 12px", fontSize: 12 }}
+          >
+            This will pop Ready wallet on Starknet Mainnet and move a total of{" "}
+            <b>{fmtStrkBaseUnits(totalExecution)} STRK</b> from your shielded balance.
+          </div>
+        </div>
+      )}
+
+      {/* Execute (initial request) */}
+      {!confirming && (
+        <div style={{ marginTop: 16 }}>
+          <button
+            className={styles.btnCta}
+            disabled={!canRequestExecute}
+            onClick={handleRequestExecute}
+          >
+            {busy
+              ? "Executing…"
+              : payroll?.status === "completed"
+              ? "Payroll complete"
+              : payroll?.status === "failed"
+              ? "Payroll failed — generate another to retry"
+              : "Execute privately"}
+          </button>
+        </div>
+      )}
 
       {/* Final status */}
       {payroll?.status === "completed" && (
@@ -362,6 +517,27 @@ export default function PayrollTab() {
         </div>
       )}
     </div>
+  );
+}
+
+function VerifyBadge({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        border: `1px solid ${ok ? "var(--green)" : "var(--danger)"}`,
+        color: ok ? "var(--green)" : "var(--danger)",
+        background: ok ? "var(--green-soft)" : "#fdecec",
+      }}
+    >
+      <span aria-hidden>{ok ? "✓" : "✗"}</span>
+      {label}
+    </span>
   );
 }
 

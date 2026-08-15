@@ -11,11 +11,19 @@
 import type { ProviderInterface, WalletAccountV6 } from "starknet";
 import { buildPayrollActions } from "./actions";
 import type { Payroll, PaymentStatus, PayrollStatus } from "./types";
+import {
+  assertMainnetChain,
+  assertStrkMainnetToken,
+} from "../starknet/networks";
 
 export type ExecutePayrollArgs = {
   wallet: WalletAccountV6;
   provider: ProviderInterface;
   tokenAddress: string;
+  /** Wallet's current chain ID (from wallet-standard event stream or
+   *  walletV6.requestChainId). The executor asserts this is Starknet
+   *  Mainnet before submitting. Backstop for a compromised or buggy UI. */
+  currentChainId: string;
   onUpdate?: (payroll: Payroll) => void;
   /** Overrides for waitForTransaction. Defaults match the starter kit's
    *  long budget (400 * 3s = ~20 min) because privacy-pool txs verify a
@@ -72,6 +80,11 @@ export async function executePayroll(
   if (payroll.status !== "ready") {
     throw new PayrollNotReadyError(payroll.status);
   }
+
+  // Belt + braces mainnet checks — refuse to submit if either is wrong.
+  // Throwing here surfaces the error to the caller before any wallet popup.
+  assertMainnetChain(args.currentChainId);
+  assertStrkMainnetToken(args.tokenAddress);
 
   const actions = buildPayrollActions(payroll, args.tokenAddress);
 
