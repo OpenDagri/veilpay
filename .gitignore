@@ -42,6 +42,27 @@ coverage/
 # Cairo / Scarb
 target/
 .snfoundry_cache/
+cairo/target/
+
+# Vercel
+.vercel
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
+
+# Starter-kit-specific
+.yalc
+.pnpm-debug.log*
+package-lock.json
+A1priv/
+.gstack/
+/scripts-ts-node/
+
+# Dev-tool caches (not committed)
+.codex/
+.cursor/
+.serena/
 
 # Claude Code scratch
 .claude/
