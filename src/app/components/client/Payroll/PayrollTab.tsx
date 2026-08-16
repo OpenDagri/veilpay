@@ -277,8 +277,9 @@ export default function PayrollTab() {
         <div className={styles.warn} style={{ marginTop: 12 }}>
           {missingAddresses} recipient{missingAddresses === 1 ? "" : "s"} without an address.
           Populate <code>DEMO_RECIPIENTS</code> in{" "}
-          <code>src/lib/demo/recipients.ts</code> with pre-registered Sepolia
-          wallets, then click Generate again.
+          <code>src/lib/demo/recipients.ts</code> with Starknet Mainnet
+          addresses that are already registered in the STRK20 privacy pool,
+          then click Generate again.
           {" "}
           <span style={{ opacity: 0.7 }}>
             (DEMO_RECIPIENTS currently has {DEMO_RECIPIENTS.length} entries.)
