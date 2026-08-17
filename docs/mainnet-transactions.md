@@ -29,9 +29,9 @@ or if the amount / recipient in Ready doesn't match the app.
 
 | Date (UTC) | Purpose | Amount | Target | Tx hash | Result | Explorer |
 |---|---|---|---|---|---|---|
-| _pending_ | first STRK20 shield (M3) | 0.01 STRK | pool (wallet-resolved) | _pending_ | _pending_ | https://voyager.online/tx/... |
-| _pending_ | first private transfer (M4) | 0.001 STRK | employer self | _pending_ | _pending_ | https://voyager.online/tx/... |
-| _pending_ | first private payroll batch (M6) | 3 × 0.001 STRK | DEMO_RECIPIENTS A/B/C | _pending_ | _pending_ | https://voyager.online/tx/... |
+| 2026-08-16 11:01 | first STRK20 shield (M3) — funded demo balance | 6 STRK | pool entry-point `0x1270…584f` → pool `0x4033…812a` | `0x2099783559…a02a0b072` | SUCCEEDED · ACCEPTED_ON_L1 · block 13380900 · fee 3.23 STRK | https://voyager.online/tx/0x20997835598931e114150b22f87a6cf1de5a60cb67a48b435d0a5aa02a0b072 |
+| _pending_ | first private transfer (M4) | 0.001 STRK | employer self (self-recipient Demo Mode) | _pending_ | _pending_ | https://voyager.online/tx/... |
+| _pending_ | first private payroll batch (M6) | 3 × 0.001 STRK | employer self (Demo Mode) or DEMO_RECIPIENTS A/B/C | _pending_ | _pending_ | https://voyager.online/tx/... |
 
 Add rows for retries, unshield, and each subsequent payroll batch.
 
