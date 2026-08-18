@@ -29,9 +29,12 @@ or if the amount / recipient in Ready doesn't match the app.
 
 | Date (UTC) | Purpose | Amount | Target | Tx hash | Result | Explorer |
 |---|---|---|---|---|---|---|
-| 2026-08-16 11:01 | first STRK20 shield (M3) — funded demo balance | 6 STRK | pool entry-point `0x1270…584f` → pool `0x4033…812a` | `0x2099783559…a02a0b072` | SUCCEEDED · ACCEPTED_ON_L1 · block 13380900 · fee 3.23 STRK | https://voyager.online/tx/0x20997835598931e114150b22f87a6cf1de5a60cb67a48b435d0a5aa02a0b072 |
-| _pending_ | first private transfer (M4) | 0.001 STRK | employer self (self-recipient Demo Mode) | _pending_ | _pending_ | https://voyager.online/tx/... |
-| _pending_ | first private payroll batch (M6) | 3 × 0.001 STRK | employer self (Demo Mode) or DEMO_RECIPIENTS A/B/C | _pending_ | _pending_ | https://voyager.online/tx/... |
+| 2026-08-16 11:01 | first STRK20 shield (M3) — employer (Ready X) funded demo balance | 6 STRK | pool entry-point `0x1270…584f` → pool `0x4033…812a` | `0x2099783559…a02a0b072` | SUCCEEDED · ACCEPTED_ON_L1 · block 13380900 · fee 3.23 STRK | https://voyager.online/tx/0x20997835598931e114150b22f87a6cf1de5a60cb67a48b435d0a5aa02a0b072 |
+| 2026-08-16 11:01 | recipient-wallet registration shield (spare wallet, not in DEMO_RECIPIENTS) | 6 STRK | pool entry-point `0x1270…584f` → pool `0x4033…812a` | `0x647a43dd2f…816db29de` | SUCCEEDED · ACCEPTED_ON_L1 · block 13380918 · fee 3.48 STRK | https://voyager.online/tx/0x647a43dd2f7baab32889110d4b86d66a596fa5fb91982910585e20816db29de |
+| 2026-08-18 09:23 | recipient-wallet registration shield (spare wallet, not in DEMO_RECIPIENTS) | 6 STRK | pool entry-point `0x1270…584f` → pool `0x4033…812a` | `0x80020f3165…be30b354a` | SUCCEEDED · ACCEPTED_ON_L1 · block 13480525 · fee 3.21 STRK | https://voyager.online/tx/0x80020f3165c2b1ea9c366b31586f059751ea28b457bc4c87ac2fcbe30b354a |
+| 2026-08-18 09:28 | recipient-wallet registration shield (spare wallet, not in DEMO_RECIPIENTS) | 6 STRK | pool entry-point `0x1270…584f` → pool `0x4033…812a` | `0x73eb51f162…f0c97da15` | SUCCEEDED · ACCEPTED_ON_L1 · block 13480700 · fee 3.24 STRK | https://voyager.online/tx/0x73eb51f162313ff35c6d0d6b9b66acf32dc1f1958820504ece98d7f0c97da15 |
+| _pending_ | first private transfer (M4) | 0.001 STRK | employer self (Demo Mode) | _pending_ | _pending_ | https://voyager.online/tx/... |
+| _pending_ | first private payroll batch (M6) | 3 × 0.001 STRK | employer self (Demo Mode) | _pending_ | _pending_ | https://voyager.online/tx/... |
 
 Add rows for retries, unshield, and each subsequent payroll batch.
 
