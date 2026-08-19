@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { num } from "starknet";
 import styles from "../../../uni.module.css";
 import * as constants from "@/utils/constants";
@@ -35,14 +35,23 @@ function shortHex(h: string): string {
   return hex.length <= 13 ? hex : `${hex.slice(0, 7)}...${hex.slice(-4)}`;
 }
 
-type PreflightState =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "ok"; shielded: bigint; required: bigint }
-  | { kind: "insufficient"; shielded: bigint; required: bigint }
-  | { kind: "error"; message: string };
+// The wallet-reported STRK private balance is the source of truth for
+// whether a payroll can execute. Loading/error/zero are all distinct from
+// "ready with 0 STRK" so the UI never claims the balance is zero while it
+// is actually still being fetched.
+type PrivateBalanceState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; amount: bigint }
+  | { status: "error"; message: string };
 
-export default function PayrollTab() {
+type PayrollTabProps = {
+  /** Ask the parent to switch to the Shield tab so the user can add
+   *  private funds. Optional so the tab still renders in isolation. */
+  onNavigateToShield?: () => void;
+};
+
+export default function PayrollTab({ onNavigateToShield }: PayrollTabProps = {}) {
   const myWalletAccount = useStoreWallet((s) => s.myWalletAccount);
   const connectedAddress = useStoreWallet((s) => s.address);
   const isConnected = useStoreWallet((s) => s.isConnected);
@@ -57,9 +66,18 @@ export default function PayrollTab() {
   const [seed, setSeed] = useState<string>(DEFAULT_DEMO_SEED);
   const [count, setCount] = useState<number>(3);
   const [payroll, setPayroll] = useState<Payroll | null>(null);
-  const [preflight, setPreflight] = useState<PreflightState>({ kind: "idle" });
+  const [privateBalance, setPrivateBalance] = useState<PrivateBalanceState>({
+    status: "idle",
+  });
   const [confirming, setConfirming] = useState<boolean>(false);
   const [busy, setBusy] = useState<boolean>(false);
+  // Self-recipient Demo Mode: every generated recipient's on-chain address is
+  // the connected wallet. Names + display salaries stay fictional so judges
+  // still see a realistic payroll UI. Default ON because no external
+  // pre-registered addresses are needed — the connected wallet is registered
+  // as soon as it has ever shielded. Users can flip it off to run a real
+  // payroll against DEMO_RECIPIENTS.
+  const [demoMode, setDemoMode] = useState<boolean>(true);
 
   const totalExecution = useMemo(
     () => (payroll ? sumExecutionAmount(payroll.recipients) : 0n),
@@ -68,35 +86,17 @@ export default function PayrollTab() {
 
   const missingAddresses =
     payroll?.recipients.filter((r) => !r.address).length ?? 0;
-  const canRequestExecute =
+
+  const balanceReadable =
     isConnected &&
     isStrk20Network &&
     chainVerifiedMainnet &&
     TOKEN_VERIFIED_MAINNET &&
-    payroll !== null &&
-    payroll.status === "ready" &&
-    missingAddresses === 0 &&
-    preflight.kind === "ok" &&
-    !busy &&
-    !confirming;
+    !!myWalletAccount;
 
-  const handleGenerate = () => {
-    setPreflight({ kind: "idle" });
-    setConfirming(false);
-    setPayroll(generatePayroll({ seed, recipientCount: count }));
-  };
-
-  const handleGenerateAnother = () => {
-    const newSeed = `${seed}-${Math.random().toString(36).slice(2, 8)}`;
-    setSeed(newSeed);
-    setPreflight({ kind: "idle" });
-    setConfirming(false);
-    setPayroll(generatePayroll({ seed: newSeed, recipientCount: count }));
-  };
-
-  const handlePreflight = async () => {
-    if (!myWalletAccount || !payroll) return;
-    setPreflight({ kind: "checking" });
+  const loadPrivateBalance = useCallback(async () => {
+    if (!balanceReadable || !myWalletAccount) return;
+    setPrivateBalance({ status: "loading" });
     try {
       const raw = await myWalletAccount.strk20Balances([TOKEN]);
       const arr = readBalanceArray(raw);
@@ -108,19 +108,76 @@ export default function PayrollTab() {
           return false;
         }
       });
-      const shielded = entry ? BigInt(entry.amount) : 0n;
-      const required = sumExecutionAmount(payroll.recipients);
-      setPreflight(
-        shielded >= required
-          ? { kind: "ok", shielded, required }
-          : { kind: "insufficient", shielded, required }
-      );
+      const amount = entry ? BigInt(entry.amount) : 0n;
+      setPrivateBalance({ status: "ready", amount });
     } catch (err: unknown) {
-      setPreflight({
-        kind: "error",
+      setPrivateBalance({
+        status: "error",
         message: err instanceof Error ? err.message : String(err),
       });
     }
+  }, [balanceReadable, myWalletAccount]);
+
+  // Auto-load whenever the wallet + network preconditions become satisfied.
+  // The dependency chain (isConnected/chainId/etc.) is baked into
+  // `loadPrivateBalance` via useCallback, so a single effect on it is enough.
+  useEffect(() => {
+    if (balanceReadable) {
+      loadPrivateBalance();
+    } else {
+      setPrivateBalance({ status: "idle" });
+    }
+  }, [balanceReadable, loadPrivateBalance]);
+
+  // Derived preflight — never queries; always reflects the latest wallet-reported
+  // balance vs the current payroll's required execution total.
+  const requiredExecution = totalExecution;
+  const executionCoveredByBalance =
+    privateBalance.status === "ready" &&
+    requiredExecution > 0n &&
+    privateBalance.amount >= requiredExecution;
+  const executionBlockedByBalance =
+    privateBalance.status === "ready" &&
+    requiredExecution > 0n &&
+    privateBalance.amount < requiredExecution;
+
+  const canRequestExecute =
+    isConnected &&
+    isStrk20Network &&
+    chainVerifiedMainnet &&
+    TOKEN_VERIFIED_MAINNET &&
+    payroll !== null &&
+    payroll.status === "ready" &&
+    missingAddresses === 0 &&
+    executionCoveredByBalance &&
+    !busy &&
+    !confirming;
+
+  const selfRecipientForGenerate =
+    demoMode && connectedAddress ? connectedAddress : undefined;
+
+  const handleGenerate = () => {
+    setConfirming(false);
+    setPayroll(
+      generatePayroll({
+        seed,
+        recipientCount: count,
+        selfRecipient: selfRecipientForGenerate,
+      })
+    );
+  };
+
+  const handleGenerateAnother = () => {
+    const newSeed = `${seed}-${Math.random().toString(36).slice(2, 8)}`;
+    setSeed(newSeed);
+    setConfirming(false);
+    setPayroll(
+      generatePayroll({
+        seed: newSeed,
+        recipientCount: count,
+        selfRecipient: selfRecipientForGenerate,
+      })
+    );
   };
 
   // Two-step execute: first click opens the confirmation card; only the
@@ -139,6 +196,9 @@ export default function PayrollTab() {
     // mainnet at THIS moment, refuse.
     if (!chainVerifiedMainnet) return;
     if (!TOKEN_VERIFIED_MAINNET) return;
+    // Re-check the balance guard right before signing — the balance may have
+    // been spent in another window since it was last loaded.
+    if (!executionCoveredByBalance) return;
     setConfirming(false);
     setBusy(true);
     const provider = constants.myFrontendProviders[myFrontendProviderIndex];
@@ -155,6 +215,9 @@ export default function PayrollTab() {
       // unhandled rejection in the UI. The recipient rows carry the error state.
     } finally {
       setBusy(false);
+      // Post-execution balance is authoritative — always requery, even on
+      // failure (a submitted-then-reverted tx should still refresh).
+      loadPrivateBalance();
     }
   };
 
@@ -165,9 +228,44 @@ export default function PayrollTab() {
 
   return (
     <div>
+      {/* Private balance card — top of tab, always visible once a wallet is connected */}
+      <PrivateBalanceCard
+        state={privateBalance}
+        canRead={balanceReadable}
+        isConnected={isConnected}
+        chainVerifiedMainnet={chainVerifiedMainnet}
+        tokenVerifiedMainnet={TOKEN_VERIFIED_MAINNET}
+        isStrk20Network={isStrk20Network}
+        onRefresh={loadPrivateBalance}
+        onAddFunds={onNavigateToShield}
+      />
+
       {/* Generate controls */}
-      <div className={styles.inputBlock}>
+      <div className={styles.inputBlock} style={{ marginTop: 12 }}>
         <div className={styles.inputLabel}>Demo payroll</div>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "6px 0 10px",
+            fontSize: 12,
+          }}
+        >
+          <label style={{ display: "inline-flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={demoMode}
+              onChange={(e) => setDemoMode(e.target.checked)}
+              disabled={busy}
+            />
+            <b>Demo Mode</b>
+            <span style={{ opacity: 0.7 }}>
+              — every recipient points at your connected wallet (0.001 STRK each,
+              real private transfers, reproducible)
+            </span>
+          </label>
+        </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12 }}>
             <span style={{ opacity: 0.65 }}>Seed</span>
@@ -219,6 +317,21 @@ export default function PayrollTab() {
         <div className={styles.receipt} style={{ marginTop: 16 }}>
           <div className={styles.receiptHead}>
             <span>{payroll.label}</span>
+            {demoMode && (
+              <span
+                style={{
+                  marginLeft: 8,
+                  fontSize: 11,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  border: "1px solid var(--line)",
+                  opacity: 0.85,
+                }}
+                title="Every recipient is your connected wallet — real private STRK transfers, reproducible for judges."
+              >
+                DEMO MODE (self)
+              </span>
+            )}
             <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>
               {payroll.recipients.length} recipient{payroll.recipients.length === 1 ? "" : "s"}
               {" · "}
@@ -276,11 +389,12 @@ export default function PayrollTab() {
       {payroll && missingAddresses > 0 && (
         <div className={styles.warn} style={{ marginTop: 12 }}>
           {missingAddresses} recipient{missingAddresses === 1 ? "" : "s"} without an address.
-          Populate <code>DEMO_RECIPIENTS</code> in{" "}
-          <code>src/lib/demo/recipients.ts</code> with Starknet Mainnet
-          addresses that are already registered in the STRK20 privacy pool,
-          then click Generate again.
           {" "}
+          Turn <b>Demo Mode</b> on to route every recipient to your connected
+          wallet, or populate <code>DEMO_RECIPIENTS</code> in{" "}
+          <code>src/lib/demo/recipients.ts</code> with Starknet Mainnet
+          addresses already registered in the STRK20 privacy pool, then click
+          Generate again.{" "}
           <span style={{ opacity: 0.7 }}>
             (DEMO_RECIPIENTS currently has {DEMO_RECIPIENTS.length} entries.)
           </span>
@@ -322,56 +436,14 @@ export default function PayrollTab() {
         </div>
       )}
 
-      {/* Preflight */}
+      {/* Derived preflight readout — no button, always in sync with balance state */}
       {payroll && payroll.status === "ready" && (
-        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-          <button
-            className={styles.btn}
-            onClick={handlePreflight}
-            disabled={!isConnected || !isStrk20Network || preflight.kind === "checking" || busy}
-          >
-            {preflight.kind === "checking" ? "Checking balance…" : "Preflight: check shielded balance"}
-          </button>
-        </div>
-      )}
-      {preflight.kind === "ok" && (
-        <div className={styles.verdict + " " + styles.verdictPass} style={{ marginTop: 12 }}>
-          <div className={styles.verdictHead}>
-            <span>✅</span>
-            Shielded balance covers payroll
-          </div>
-          <div className={styles.verdictRow}>
-            <b>shielded:</b> <span>{fmtStrkBaseUnits(preflight.shielded)} STRK</span>
-          </div>
-          <div className={styles.verdictRow}>
-            <b>required:</b> <span>{fmtStrkBaseUnits(preflight.required)} STRK</span>
-          </div>
-        </div>
-      )}
-      {preflight.kind === "insufficient" && (
-        <div className={styles.verdict + " " + styles.verdictFail} style={{ marginTop: 12 }}>
-          <div className={styles.verdictHead}>
-            <span>❌</span>
-            Insufficient shielded balance
-          </div>
-          <div className={styles.verdictRow}>
-            <b>shielded:</b> <span>{fmtStrkBaseUnits(preflight.shielded)} STRK</span>
-          </div>
-          <div className={styles.verdictRow}>
-            <b>required:</b> <span>{fmtStrkBaseUnits(preflight.required)} STRK</span>
-          </div>
-          <div className={styles.verdictRow} style={{ opacity: 0.75 }}>
-            Shield more STRK from the Shield tab first, then re-run preflight.
-          </div>
-        </div>
-      )}
-      {preflight.kind === "error" && (
-        <div className={styles.verdict + " " + styles.verdictFail} style={{ marginTop: 12 }}>
-          <div className={styles.verdictHead}>
-            <span>!</span>Preflight error
-          </div>
-          <div className={styles.verdictRow}>{preflight.message}</div>
-        </div>
+        <PreflightReadout
+          balance={privateBalance}
+          required={requiredExecution}
+          onRefresh={loadPrivateBalance}
+          onAddFunds={onNavigateToShield}
+        />
       )}
 
       {/* Confirmation card (shown between Execute click and wallet call) */}
@@ -454,7 +526,7 @@ export default function PayrollTab() {
               className={styles.btnCta}
               style={{ flex: 1 }}
               onClick={handleSignAndSubmit}
-              disabled={busy || !chainVerifiedMainnet || !TOKEN_VERIFIED_MAINNET}
+              disabled={busy || !chainVerifiedMainnet || !TOKEN_VERIFIED_MAINNET || !executionCoveredByBalance}
             >
               {busy ? "Signing…" : "Sign & submit"}
             </button>
@@ -464,7 +536,16 @@ export default function PayrollTab() {
             style={{ margin: "0 12px 12px", fontSize: 12 }}
           >
             This will pop Ready wallet on Starknet Mainnet and move a total of{" "}
-            <b>{fmtStrkBaseUnits(totalExecution)} STRK</b> from your shielded balance.
+            <b>{fmtStrkBaseUnits(totalExecution)} STRK</b> from your private balance.
+            {demoMode && (
+              <>
+                {" "}
+                <span style={{ opacity: 0.8 }}>
+                  Demo Mode: every private transfer routes back to your own
+                  connected wallet — safe and reproducible.
+                </span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -515,6 +596,196 @@ export default function PayrollTab() {
       {isConnected && connectedAddress && (
         <div style={{ marginTop: 16, opacity: 0.5, fontSize: 11, textAlign: "right" }}>
           employer: {shortHex(connectedAddress)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrivateBalanceCard({
+  state,
+  canRead,
+  isConnected,
+  chainVerifiedMainnet,
+  tokenVerifiedMainnet,
+  isStrk20Network,
+  onRefresh,
+  onAddFunds,
+}: {
+  state: PrivateBalanceState;
+  canRead: boolean;
+  isConnected: boolean;
+  chainVerifiedMainnet: boolean;
+  tokenVerifiedMainnet: boolean;
+  isStrk20Network: boolean;
+  onRefresh: () => void;
+  onAddFunds?: () => void;
+}) {
+  const heading = (
+    <div style={{ fontSize: 12, opacity: 0.65, letterSpacing: 0.4 }}>
+      PRIVATE PAYROLL BALANCE
+    </div>
+  );
+  const walletLine = (
+    <div style={{ fontSize: 12, opacity: 0.55, marginTop: 6 }}>
+      Available in your connected wallet
+    </div>
+  );
+
+  // Not connected / not ready to read yet — show a placeholder that never
+  // implies zero funds.
+  if (!isConnected) {
+    return (
+      <div className={styles.inputBlock}>
+        {heading}
+        <div style={{ fontSize: 26, fontWeight: 600, marginTop: 4 }}>—</div>
+        <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>
+          Connect a Starknet wallet to see your private STRK balance.
+        </div>
+      </div>
+    );
+  }
+  if (!chainVerifiedMainnet || !tokenVerifiedMainnet || !isStrk20Network || !canRead) {
+    return (
+      <div className={styles.inputBlock}>
+        {heading}
+        <div style={{ fontSize: 26, fontWeight: 600, marginTop: 4 }}>—</div>
+        <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>
+          Switch your wallet to Starknet Mainnet to read your private STRK balance.
+        </div>
+      </div>
+    );
+  }
+
+  if (state.status === "idle" || state.status === "loading") {
+    return (
+      <div className={styles.inputBlock}>
+        {heading}
+        <div style={{ fontSize: 20, fontWeight: 500, marginTop: 4, opacity: 0.7 }}>
+          Checking…
+        </div>
+        {walletLine}
+      </div>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <div className={styles.inputBlock}>
+        {heading}
+        <div style={{ fontSize: 16, fontWeight: 500, marginTop: 4, color: "var(--danger)" }}>
+          Could not read private STRK balance.
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.6, marginTop: 6, wordBreak: "break-word" }}>
+          {state.message}
+        </div>
+        <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+          <button className={styles.btn} onClick={onRefresh}>Retry</button>
+        </div>
+      </div>
+    );
+  }
+
+  // status === "ready"
+  const isZero = state.amount === 0n;
+  return (
+    <div className={styles.inputBlock}>
+      {heading}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 28, fontWeight: 600 }}>
+          {fmtStrkBaseUnits(state.amount)}
+        </div>
+        <div style={{ fontSize: 14, opacity: 0.7 }}>STRK</div>
+      </div>
+      {walletLine}
+      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className={styles.btn} onClick={onRefresh}>Refresh balance</button>
+        {isZero && onAddFunds && (
+          <button className={styles.btn} onClick={onAddFunds}>Add private funds</button>
+        )}
+      </div>
+      {isZero && (
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+          No private STRK available. Shield STRK before running payroll.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PreflightReadout({
+  balance,
+  required,
+  onRefresh,
+  onAddFunds,
+}: {
+  balance: PrivateBalanceState;
+  required: bigint;
+  onRefresh: () => void;
+  onAddFunds?: () => void;
+}) {
+  if (balance.status === "loading" || balance.status === "idle") {
+    return (
+      <div className={styles.verdict} style={{ marginTop: 12 }}>
+        <div className={styles.verdictHead}>
+          <span>⋯</span> Checking private balance…
+        </div>
+      </div>
+    );
+  }
+  if (balance.status === "error") {
+    return (
+      <div className={styles.verdict + " " + styles.verdictFail} style={{ marginTop: 12 }}>
+        <div className={styles.verdictHead}>
+          <span>!</span> Cannot verify private balance
+        </div>
+        <div className={styles.verdictRow} style={{ opacity: 0.85 }}>
+          {balance.message}
+        </div>
+        <div className={styles.verdictRow}>
+          <button className={styles.btn} onClick={onRefresh}>Retry</button>
+        </div>
+      </div>
+    );
+  }
+  // balance.status === "ready"
+  if (required <= 0n) {
+    return null;
+  }
+  const covered = balance.amount >= required;
+  if (covered) {
+    return (
+      <div className={styles.verdict + " " + styles.verdictPass} style={{ marginTop: 12 }}>
+        <div className={styles.verdictHead}>
+          <span>✅</span> Ready to execute
+        </div>
+        <div className={styles.verdictRow}>
+          <b>Private balance:</b>
+          <span>{fmtStrkBaseUnits(balance.amount)} STRK</span>
+        </div>
+        <div className={styles.verdictRow}>
+          <b>Payroll execution:</b>
+          <span>{fmtStrkBaseUnits(required)} STRK</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.verdict + " " + styles.verdictFail} style={{ marginTop: 12 }}>
+      <div className={styles.verdictHead}>
+        <span>❌</span> Insufficient private balance
+      </div>
+      <div className={styles.verdictRow}>
+        <b>Payroll requires:</b>
+        <span>{fmtStrkBaseUnits(required)} STRK</span>
+      </div>
+      <div className={styles.verdictRow}>
+        <b>Available:</b>
+        <span>{fmtStrkBaseUnits(balance.amount)} STRK</span>
+      </div>
+      {onAddFunds && (
+        <div className={styles.verdictRow}>
+          <button className={styles.btn} onClick={onAddFunds}>Add private funds</button>
         </div>
       )}
     </div>

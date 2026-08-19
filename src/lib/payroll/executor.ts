@@ -68,6 +68,30 @@ function setAll(
   );
 }
 
+// Reset every recipient to a clean pending state, wiping any tx hash / error
+// left over from a previous execution. Applied at the top of executePayroll so
+// a stale success hash cannot leak into a new run's UI.
+function resetAllRecipients(payroll: Payroll): Payroll {
+  return {
+    ...payroll,
+    status: "ready",
+    recipients: payroll.recipients.map((r) => ({
+      ...r,
+      status: "pending",
+      txHash: undefined,
+      error: undefined,
+    })),
+  };
+}
+
+// A wallet-returned transaction hash must be a hex string starting with 0x
+// and long enough to plausibly be a Starknet transaction hash. Anything else
+// (undefined, empty string, garbage) is treated as a wallet-side failure — we
+// never render "confirmed" against such a value.
+function isValidTxHash(v: unknown): v is string {
+  return typeof v === "string" && /^0x[0-9a-fA-F]{60,66}$/.test(v);
+}
+
 /**
  * Execute a `ready` payroll. Returns the final Payroll on success. On failure
  * still resolves with a Payroll whose status is "failed" (the error is also
@@ -88,21 +112,30 @@ export async function executePayroll(
 
   const actions = buildPayrollActions(payroll, args.tokenAddress);
 
-  let current: Payroll = setAll(payroll, "awaiting_wallet", "executing");
+  // Hard-reset recipient state before signalling awaiting_wallet, so no tx
+  // hash from a previous execution can leak into the UI mid-flight.
+  const cleanPayroll = resetAllRecipients(payroll);
+  let current: Payroll = setAll(cleanPayroll, "awaiting_wallet", "executing");
   args.onUpdate?.(current);
 
   let txHash: string;
   try {
     const result = await args.wallet.strk20InvokeTransaction(actions);
+    if (!isValidTxHash(result?.transaction_hash)) {
+      const message = `Wallet returned no valid transaction hash (got: ${JSON.stringify(result)}). Refusing to mark payroll as submitted.`;
+      current = setAll(cleanPayroll, "failed", "failed", { error: message });
+      args.onUpdate?.(current);
+      throw new Error(message);
+    }
     txHash = result.transaction_hash;
   } catch (err: unknown) {
     const message = errorMessage(err);
-    current = setAll(payroll, "failed", "failed", { error: message });
+    current = setAll(cleanPayroll, "failed", "failed", { error: message });
     args.onUpdate?.(current);
     throw err;
   }
 
-  current = setAll(payroll, "submitted", "executing", { txHash });
+  current = setAll(cleanPayroll, "submitted", "executing", { txHash });
   args.onUpdate?.(current);
 
   const retries = args.waitOptions?.retries ?? 400;
@@ -115,21 +148,32 @@ export async function executePayroll(
     });
     // Starknet.js returns a wrapped receipt; unwrap defensively.
     const raw = (receipt as { value?: unknown } | undefined)?.value ?? receipt;
-    const reverted = readExecutionStatus(raw) === "REVERTED";
-    if (reverted) {
-      current = setAll(payroll, "failed", "failed", {
+    const execStatus = readExecutionStatus(raw);
+    // We treat "confirmed" as a strict SUCCEEDED verdict. Any other value
+    // (REVERTED / undefined / unexpected string) is a failure — we never
+    // infer success from the absence of REVERTED alone.
+    if (execStatus === "REVERTED") {
+      current = setAll(cleanPayroll, "failed", "failed", {
         txHash,
         error: "Transaction reverted on-chain.",
       });
       args.onUpdate?.(current);
       return current;
     }
-    current = setAll(payroll, "confirmed", "completed", { txHash });
+    if (execStatus !== "SUCCEEDED") {
+      current = setAll(cleanPayroll, "failed", "failed", {
+        txHash,
+        error: `Unexpected execution_status: ${String(execStatus)}. Refusing to mark as confirmed.`,
+      });
+      args.onUpdate?.(current);
+      return current;
+    }
+    current = setAll(cleanPayroll, "confirmed", "completed", { txHash });
     args.onUpdate?.(current);
     return current;
   } catch (err: unknown) {
     const message = errorMessage(err);
-    current = setAll(payroll, "failed", "failed", { txHash, error: message });
+    current = setAll(cleanPayroll, "failed", "failed", { txHash, error: message });
     args.onUpdate?.(current);
     throw err;
   }

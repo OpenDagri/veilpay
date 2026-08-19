@@ -10,6 +10,7 @@ import { useFrontendProvider } from "../provider/providerContext";
 import { StrkCoin } from "../../TokenIcons";
 import SelectWallet from "./SelectWallet";
 import PayrollTab from "../Payroll/PayrollTab";
+import DebugTransferTab from "../DebugTransfer/DebugTransferTab";
 
 // DEMO: all actions use one token (STRK). Swap constants.addrSTRK for your token,
 // or make the token a user selection.
@@ -137,10 +138,11 @@ function errorResult(msg: string): ActionResult {
 // Tabs - one STRK20 action each (Umbra-style single-action interface).
 // "payroll" is VeilPay's headline flow; the rest of the tabs are kept as
 // primitive-level building blocks for judges who want to see them work.
-type TabKey = "payroll" | "shield" | "send" | "unshield" | "echo" | "balances";
-type ActionTabKey = Exclude<TabKey, "payroll">;
+type TabKey = "payroll" | "debug" | "shield" | "send" | "unshield" | "echo" | "balances";
+type ActionTabKey = Exclude<TabKey, "payroll" | "debug">;
 const TABS: { key: TabKey; label: string }[] = [
   { key: "payroll", label: "Payroll" },
+  { key: "debug", label: "Debug transfer" },
   { key: "shield", label: "Shield" },
   { key: "send", label: "Send" },
   { key: "unshield", label: "Unshield" },
@@ -495,13 +497,13 @@ export default function WalletAccountV6Tag() {
     ActionTabKey,
     { label: string; value: string; token: string; hint: string; cta: string; onRun: () => void; result: ActionResult | null; disabled: boolean }
   > = {
-    shield: { label: "You're shielding", value: "0.01", token: "STRK", hint: "Deposit into the privacy pool (mainnet-safe demo amount)", cta: "Shield", onRun: handleShield, result: resultShield, disabled: !isStrk20Network },
+    shield: { label: "Add Private Funds", value: "0.01", token: "STRK", hint: "Shield STRK into your private balance — used by VeilPay payrolls", cta: "Shield", onRun: handleShield, result: resultShield, disabled: !isStrk20Network },
     send: { label: "You're sending - to self", value: "0.001", token: "STRK", hint: "Private in-pool transfer", cta: "Self transfer", onRun: handleSelfTransfer, result: resultTransfer, disabled: !isStrk20Network },
     unshield: { label: "You're unshielding", value: "0.001", token: "STRK", hint: "Withdraw to your account", cta: "Unshield", onRun: handleUnshield, result: resultUnshield, disabled: !isStrk20Network },
     echo: { label: "Echo invoke round-trip", value: "0.005", token: "STRK", hint: "Withdraw → helper → refill open note", cta: "Run echo", onRun: handleComplex, result: resultComplex, disabled: !isStrk20Network || !hasEchoHelper },
     balances: { label: "Shielded balances", value: "All", token: "tokens", hint: "Read your private pool balances", cta: "Query balances", onRun: handleBalances, result: resultBalances, disabled: !isStrk20Network },
   };
-  const active = tab !== "payroll" ? CONFIG[tab] : null;
+  const active = tab !== "payroll" && tab !== "debug" ? CONFIG[tab] : null;
 
   return (
     <div className={styles.panel}>
@@ -519,7 +521,9 @@ export default function WalletAccountV6Tag() {
       </div>
 
       {tab === "payroll" ? (
-        <PayrollTab />
+        <PayrollTab onNavigateToShield={() => setTab("shield")} />
+      ) : tab === "debug" ? (
+        <DebugTransferTab />
       ) : active ? (
         <>
           {/* Active-action input block */}

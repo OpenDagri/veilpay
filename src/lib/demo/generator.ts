@@ -34,13 +34,21 @@ export type GeneratePayrollOptions = {
   label?: string;
   /** Override the fictional currency label shown next to display amounts. */
   displayCurrency?: string;
+  /** Self-recipient Demo Mode: when set, every generated recipient's
+   *  `address` is forced to this value (typically the connected wallet).
+   *  DEMO_RECIPIENTS is ignored in this mode. Never hardcode — pass the
+   *  live wallet address from the caller. */
+  selfRecipient?: string;
 };
 
 export function generatePayroll(options: GeneratePayrollOptions = {}): Payroll {
   const seed = options.seed ?? DEFAULT_DEMO_SEED;
   const count = Math.max(1, Math.min(options.recipientCount ?? 3, 12));
   const displayCurrency = options.displayCurrency ?? "USDC";
-  const label = options.label ?? defaultLabel();
+  const isSelfDemo = !!options.selfRecipient;
+  const label =
+    options.label ??
+    (isSelfDemo ? `${defaultLabel()} — self-recipient demo` : defaultLabel());
 
   const rng = makeRng(seed);
   const usedNames = new Set<string>();
@@ -51,8 +59,13 @@ export function generatePayroll(options: GeneratePayrollOptions = {}): Payroll {
     const displayValue = rng.intInclusive(DISPLAY_MIN, DISPLAY_MAX);
     const displayAmount = `${displayValue} ${displayCurrency}`;
 
-    const demo = DEMO_RECIPIENTS[i];
-    const address = demo?.address ?? "";
+    let address: string;
+    if (isSelfDemo) {
+      address = options.selfRecipient as string;
+    } else {
+      const demo = DEMO_RECIPIENTS[i];
+      address = demo?.address ?? "";
+    }
 
     recipients.push({
       id: `${seed}:${i}`,
